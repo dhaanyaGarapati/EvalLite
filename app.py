@@ -1,101 +1,257 @@
-
-import os
-import time
-import pandas as pd
-import streamlit as st
-
+import os, random, hashlib, pandas as pd, streamlit as st # type: ignore
+from dotenv import load_dotenv # type: ignore
+load_dotenv()
 from llm_clients import LLMClients
 from eval import fluency_rule_based, factuality_score
+from judge_llama import llama_fact_check # type: ignore
 
-st.set_page_config(page_title="EvalLite — GPT-4o vs Claude Haiku", layout="wide")
+# --- Streamlit config ---
+st.set_page_config(page_title="EvalLite — Controlled Inputs", layout="wide")
+st.title("EvalLite — Controlled LLM Evaluation")
 
-st.sidebar.title("EvalLite Settings")
-mock_mode = st.sidebar.toggle("Mock mode (no API calls)", value=not (os.getenv("OPENAI_API_KEY") and os.getenv("ANTHROPIC_API_KEY")))
-temperature = st.sidebar.slider("Temperature", 0.0, 1.0, 0.2, 0.1)
-max_tokens = st.sidebar.slider("Max tokens", 64, 1024, 400, 32)
-use_llm_judge = st.sidebar.toggle("Use LLM-as-a-Judge (fluency only)", value=False)
+# --- Sidebar toggles ---
+st.sidebar.header("Settings")
+dataset_mode = st.sidebar.toggle("Dataset mode (controlled inputs)", value=True)
+mock_mode = st.sidebar.toggle("Mock mode (offline demo)", value=False)
+neutral_judge = st.sidebar.toggle("Neutral Judge (Llama-as-a-Judge)", value=False)
+deep_factuality = st.sidebar.toggle("Deep Factuality Mode (Llama fact check)", value=False)
 
-st.title("EvalLite — Compare GPT-4o vs Claude Haiku")
-st.caption("Enter a prompt once. See two model outputs, with fluency and factuality scores.")
+# Fixed parameters for reproducibility
+temperature = 0.2
+max_tokens = 350
 
-prompt = st.text_area("Your prompt", height=140, placeholder="e.g., Summarize this abstract in three sentences and name any datasets.")
-go = st.button("Compare")
-
-if "history" not in st.session_state:
-    st.session_state.history = []
-
+# --- Helper functions ---
 def _mock_response(name: str) -> str:
-    return f"""[{name}] This is a mock response. Replace with real API output by disabling Mock Mode in the sidebar.
-It demonstrates how text will be evaluated for fluency and factuality."""
+    return f"[{name}] Mock response. Disable Mock Mode to call the real API."
 
-def llm_judge_score(text: str) -> float:
-    # Placeholder: for now mirror rule-based score (keeps app usable in mock mode)
-    val, _ = fluency_rule_based(text)
-    return val
+@st.cache_data(show_spinner=False)
+def _cached_generate(model_name: str, prompt: str, temperature: float, max_tokens: int, mock: bool):
+    if mock:
+        return _mock_response(model_name)
+    clients = LLMClients()
+    if model_name == "gpt-4o":
+        return clients.generate_openai(prompt, max_tokens=max_tokens, temperature=temperature)
+    elif model_name == "claude-3-haiku-20240307":
+        return clients.generate_anthropic(prompt, max_tokens=max_tokens, temperature=temperature)
+    else:
+        return f"[unknown model] {model_name}"
 
-colA, colB = st.columns(2)
+# --- Dataset mode ---
+if dataset_mode:
+    st.info("Dataset Mode: choose an input from the controlled dataset CSV.")
 
-if go and prompt.strip():
-    with st.spinner("Generating..."):
-        start = time.time()
-        oa_text, an_text = "", ""
-        if mock_mode:
-            oa_text = _mock_response("GPT-4o")
-            an_text = _mock_response("Claude Haiku")
-        else:
-            clients = LLMClients()
-            try:
-                oa_text = clients.generate_openai(prompt, max_tokens=max_tokens, temperature=temperature)
-            except Exception as e:
-                oa_text = f"[OpenAI error] {e}"
-            try:
-                an_text = clients.generate_anthropic(prompt, max_tokens=max_tokens, temperature=temperature)
-            except Exception as e:
-                an_text = f"[Anthropic error] {e}"
+    # Step 1: upload or fallback to local file
+    upl = st.file_uploader("Upload dataset CSV", type=["csv"])
 
-        oa_flu, oa_feats = fluency_rule_based(oa_text)
-        an_flu, an_feats = fluency_rule_based(an_text)
-        oa_fact, oa_fact_d = factuality_score(oa_text)
-        an_fact, an_fact_d = factuality_score(an_text)
+    if upl:
+        try:
+            df = pd.read_csv(upl, encoding="utf-8")
+        except (UnicodeDecodeError, pd.errors.ParserError):
+            df = pd.read_csv(upl, encoding="latin1",on_bad_lines='skip')
+        st.sidebar.success(f"Loaded uploaded dataset ({len(df)} records).")
+    elif os.path.exists("EvalLite_Dataset.csv"):
+        df = pd.read_csv("EvalLite_Dataset.csv", encoding="utf-8")
+        st.sidebar.success(f"Loaded local file EvalLite_Dataset.csv ({len(df)} records).")
+    elif os.path.exists("dataset_template.csv"):
+        df = pd.read_csv("dataset_template.csv", encoding="utf-8")
+        st.sidebar.success(f"Loaded default dataset_template.csv ({len(df)} records).")
+    else:
+        st.warning("No dataset file uploaded or found locally.")
+        st.stop()
 
-        oa_flu_llm = llm_judge_score(oa_text) if use_llm_judge else None
-        an_flu_llm = llm_judge_score(an_text) if use_llm_judge else None
+    # Step 2: sanity check
+    if df.empty:
+        st.warning("No dataset found. Please upload one.")
+        st.stop()
 
-        elapsed = time.time() - start
+    if "id" not in df.columns:
+        st.warning("Missing 'id' column. Using row numbers instead.")
+        df["id"] = range(1, len(df) + 1)
 
-    with colA:
-        st.subheader("OpenAI GPT-4o")
-        st.code(oa_text, language="markdown")
-        st.metric("Fluency (rule)", f"{oa_flu:.1f}/100")
-        if oa_flu_llm is not None:
-            st.metric("Fluency (LLM-judge)", f"{oa_flu_llm:.1f}/100")
-        st.metric("Factuality", f"{oa_fact:.1f}/100")
-        with st.expander("Details (fluency features)"):
-            st.json(oa_feats)
-        with st.expander("Details (entities)"):
-            st.json(oa_fact_d)
+    # Step 3: select record
+    item = st.selectbox("Choose dataset item", df["id"].astype(str).tolist())
+    row = df[df["id"].astype(str) == str(item)].iloc[0]
 
-    with colB:
-        st.subheader("Anthropic Claude Haiku")
-        st.code(an_text, language="markdown")
-        st.metric("Fluency (rule)", f"{an_flu:.1f}/100")
-        if an_flu_llm is not None:
-            st.metric("Fluency (LLM-judge)", f"{an_flu_llm:.1f}/100")
-        st.metric("Factuality", f"{an_fact:.1f}/100")
-        with st.expander("Details (fluency features)"):
-            st.json(an_feats)
-        with st.expander("Details (entities)"):
-            st.json(an_fact_d)
+    # Step 4: show details
+    st.subheader(f"Item {row['id']} — {row.get('task_type','N/A')} ({row.get('domain','N/A')})")
+    st.write("**Input**")
+    st.write(row.get("input_text", ""))
 
-    df = pd.DataFrame([
-        {"Model": "GPT-4o", "Fluency(rule)": oa_flu, "Fluency(judge)": oa_flu_llm, "Factuality": oa_fact},
-        {"Model": "Claude Haiku", "Fluency(rule)": an_flu, "Fluency(judge)": an_flu_llm, "Factuality": an_fact},
-    ])
-    st.divider()
-    st.subheader("Summary")
-    st.dataframe(df, use_container_width=True)
-    st.caption(f"Elapsed: {elapsed:.2f}s")
+    if isinstance(row.get("question"), str) and row["question"].strip():
+        st.write("**Question**")
+        st.write(row["question"])
 
-    st.download_button("Download results CSV", data=df.to_csv(index=False), file_name="evallite_results.csv", mime="text/csv")
+    if isinstance(row.get("constraints"), str) and row["constraints"].strip():
+        st.write("**Constraints**")
+        st.write(row["constraints"])
+
+    # Step 5: build prompt
+    prompt = row.get("input_text", "")
+    if isinstance(row.get("question"), str) and row["question"].strip():
+        prompt += f"\n\nQuestion: {row['question']}"
+    if isinstance(row.get("constraints"), str) and row["constraints"].strip():
+        prompt += f"\n\nConstraints: {row['constraints']}"
+
 else:
-    st.info("Enter a prompt and click Compare. You can enable Mock mode if you don't have API keys.")
+    st.caption("Free Prompt Mode (not controlled).")
+    prompt = st.text_area("Enter your prompt", height=150,
+                          placeholder="Paste paragraph + question, or any task...")
+    if not prompt.strip():
+        st.stop()
+
+# --- Comparison logic ---
+go = st.button("Run Comparison")
+
+if "ab_map" not in st.session_state:
+    st.session_state.ab_map = {}
+
+def get_ab_order(key: str):
+    if key not in st.session_state.ab_map:
+        st.session_state.ab_map[key] = random.choice(["A=GPT, B=Claude", "A=Claude, B=GPT"])
+    return st.session_state.ab_map[key]
+
+if go:
+    key = hashlib.md5(prompt.encode()).hexdigest()
+    order = get_ab_order(key)
+    if order == "A=GPT, B=Claude":
+        a_model, b_model = "gpt-4o", "claude-3-haiku-20240307"
+        a_name, b_name = "GPT-4o", "Claude Haiku"
+    else:
+        a_model, b_model = "claude-3-haiku-20240307", "gpt-4o"
+        a_name, b_name = "Claude Haiku", "GPT-4o"
+
+    with st.spinner("Generating model outputs..."):
+        a_text = _cached_generate(a_model, prompt, temperature, max_tokens, mock_mode)
+        b_text = _cached_generate(b_model, prompt, temperature, max_tokens, mock_mode)
+
+    # --- Evaluate fluency & factuality ---
+    a_flu, _ = fluency_rule_based(a_text)
+    b_flu, _ = fluency_rule_based(b_text)
+    a_fact, a_fact_d = factuality_score(a_text)
+    b_fact, b_fact_d = factuality_score(b_text)
+
+    # Optional Deep Factuality check via Llama
+    if deep_factuality:
+        a_fact_llama = llama_fact_check(prompt, a_text)
+        b_fact_llama = llama_fact_check(prompt, b_text)
+        a_fact = 0.6 * a_fact + 0.4 * a_fact_llama
+        b_fact = 0.6 * b_fact + 0.4 * b_fact_llama
+
+    # Optional Neutral Judge (fluency)
+    if neutral_judge:
+        a_judge = llama_fact_check(prompt, a_text, category="fluency")
+        b_judge = llama_fact_check(prompt, b_text, category="fluency")
+    else:
+        a_judge = b_judge = None
+
+    # --- Display results ---
+    colA, colB = st.columns(2)
+
+    # ----------- OUTPUT A -----------
+    with colA:
+        st.subheader(f"Output A ({a_name})")
+        st.code(a_text, language="markdown")
+
+        # --- Fluency metrics ---
+        st.markdown("### Fluency Evaluation")
+        st.metric("Fluency (Rule-based)", f"{a_flu:.1f}/100")
+        if a_judge is not None:
+            st.metric("Fluency (Llama Judge)", f"{a_judge:.1f}/100")
+
+        # --- Factuality metrics ---
+        st.markdown("### Factuality Evaluation")
+        col1, col2 = st.columns(2)
+        col1.metric(
+            label="Factuality (Rule-based)",
+            value=f"{a_fact:.1f}/100",
+            help="Uses entity validation and Wikipedia lookups for factual consistency."
+        )
+
+        # Deep factuality toggle output
+        if deep_factuality:
+            col2.metric(
+                label="Factuality (Deep – Llama Judge)",
+                value=f"{a_fact_llama:.1f}/100",
+                help="Uses local Llama model reasoning for semantic factuality judgment."
+            )
+        else:
+            col2.metric(
+                label="Factuality (Deep – Llama Judge)",
+                value="–",
+                help="Enable 'Deep Factuality Mode' toggle to activate Llama-based judging."
+            )
+
+        # --- Details expander ---
+        with st.expander("Entity Details & Explanation"):
+            st.write("**Entities Identified:**")
+            st.json(a_fact_d)
+            st.caption(
+                f"Rule-based factuality: {a_fact:.1f}% of entities validated. "
+                + ("Llama judge score: {:.1f}/100.".format(a_fact_llama) if deep_factuality else "")
+            )
+
+    # ----------- OUTPUT B -----------
+    with colB:
+        st.subheader(f"Output B ({b_name})")
+        st.code(b_text, language="markdown")
+
+        # --- Fluency metrics ---
+        st.markdown("### Fluency Evaluation")
+        st.metric("Fluency (Rule-based)", f"{b_flu:.1f}/100")
+        if b_judge is not None:
+            st.metric("Fluency (Llama Judge)", f"{b_judge:.1f}/100")
+
+        # --- Factuality metrics ---
+        st.markdown("### Factuality Evaluation")
+        col3, col4 = st.columns(2)
+        col3.metric(
+            label="Factuality (Rule-based)",
+            value=f"{b_fact:.1f}/100",
+            help="Uses entity validation and Wikipedia lookups for factual consistency."
+        )
+
+        if deep_factuality:
+            col4.metric(
+                label="Factuality (Deep – Llama Judge)",
+                value=f"{b_fact_llama:.1f}/100",
+                help="Uses local Llama model reasoning for semantic factuality judgment."
+            )
+        else:
+            col4.metric(
+                label="Factuality (Deep – Llama Judge)",
+                value="–",
+                help="Enable 'Deep Factuality Mode' toggle to activate Llama-based judging."
+            )
+
+        with st.expander("Entity Details & Explanation"):
+            st.write("**Entities Identified:**")
+            st.json(b_fact_d)
+            st.caption(
+                f"Rule-based factuality: {b_fact:.1f}% of entities validated. "
+                + ("Llama judge score: {:.1f}/100.".format(b_fact_llama) if deep_factuality else "")
+            )
+
+    # --- Save results ---
+    df_log = pd.DataFrame([{
+        "order": order,
+        "prompt": prompt,
+        "A_model": a_model, "B_model": b_model,
+        "A_fluency": a_flu, "B_fluency": b_flu,
+        "A_factuality": a_fact, "B_factuality": b_fact,
+        "A_text": a_text, "B_text": b_text
+    }])
+
+    if os.path.exists("results.csv"):
+        old = pd.read_csv("results.csv")
+        df_log = pd.concat([old, df_log], ignore_index=True)
+
+    df_log.to_csv("results.csv", index=False)
+    st.success(" Results appended to results.csv")
+
+    st.download_button(
+        label=" Download latest results.csv",
+        data=df_log.to_csv(index=False),
+        file_name="results.csv",
+        mime="text/csv",
+        help="Download this session’s appended results file."
+    )  

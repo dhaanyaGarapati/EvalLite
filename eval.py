@@ -1,18 +1,21 @@
 
 from __future__ import annotations
 from typing import Dict, Any, List, Tuple
-import textstat
-import spacy
-import wikipediaapi
+import textstat # type: ignore
+import spacy # type: ignore
+import wikipediaapi # type: ignore
 
 try:
     nlp = spacy.load("en_core_web_sm")
 except OSError as e:
-    from spacy.cli import download
+    from spacy.cli import download # type: ignore
     download("en_core_web_sm")
     nlp = spacy.load("en_core_web_sm")
 
-wiki = wikipediaapi.Wikipedia("en")
+wiki = wikipediaapi.Wikipedia(
+    language="en",
+    user_agent="EvalLite/1.0 (dhaanya project; https://github.com/dhaanyaGarapati/EvalLite)"
+)
 
 def clamp01(x: float) -> float:
     return max(0.0, min(1.0, x))
