@@ -1,49 +1,8 @@
-# # judge_llama.py — improved Llama/Gemma Judge with stricter numeric instruction
-# #import re
-# #import torch # type: ignore
-# #from transformers import AutoTokenizer, AutoModelForCausalLM
+#DhaanyaGarapati
+#G01512900
+import re, requests, streamlit as st # type: ignore
 
-# # You can switch models easily here:
-# # model_id = "unsloth/Llama-3-1B-Instruct"  # public, may need strong prompts
-# #model_id = "HuggingFaceH4/zephyr-7b-alpha"  # recommended: more consistent instruction-following
-# model_id = "microsoft/Phi-3-mini-4k-instruct"
-
-# # Load model once at startup
-# tokenizer = AutoTokenizer.from_pretrained(model_id)
-# model = AutoModelForCausalLM.from_pretrained(
-#     model_id,
-#     torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32
-# )
-
-# def llama_fact_check(prompt: str, text: str, category: str = "factuality") -> float:
-#     """
-#     Uses a small open model to rate fluency or factuality on a 0–100 scale.
-#     Ensures numeric-only output for consistency.
-#     """
-#     if category == "fluency":
-#         instruction = (
-#             "Rate how fluent, clear, and grammatically correct this text is on a scale from 0 to 100. "
-#             "Respond ONLY with a number between 0 and 100. Do not explain or add text."
-#         )
-#     else:
-#         instruction = (
-#             "Rate how factually correct this text is given the provided prompt, on a scale from 0 to 100. "
-#             "Respond ONLY with a number between 0 and 100. Do not explain or add text."
-#         )
-
-#     llm_prompt = f"{instruction}\n\nPROMPT:\n{prompt}\n\nTEXT:\n{text}\n\nYour answer must be a number between 0 and 100, nothing else."
-
-#     inputs = tokenizer(llm_prompt, return_tensors="pt")
-#     outputs = model.generate(**inputs, max_new_tokens=32, temperature=0.2, do_sample=False)
-#     out_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
-
-#     match = re.search(r"(\d{1,3})", out_text)
-#     return float(match.group(1)) if match else 0.0
-
-# judge_llama.py — reliable Ollama-based judge with improved numeric extraction
-import re, requests, streamlit as st
-
-OLLAMA_MODEL = "phi3"  # or "llama3", "mistral"
+OLLAMA_MODEL = "phi3"  
 OLLAMA_URL = "http://localhost:11434/api/generate"
 
 def _extract_score(text: str) -> float:
