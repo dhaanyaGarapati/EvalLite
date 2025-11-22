@@ -1,4 +1,4 @@
-# EvalLite HSR – Human Subjects Research Study on LLM Evaluation
+# EvalLite HSR - Human Subjects Research Study on LLM Evaluation
 
 EvalLite HSR is a web-based evaluation tool built to support an IRB-compliant Human Subjects Research (HSR) study on how people perceive and compare responses from two modern Large Language Models (LLMs): GPT-4o and Claude 3 Haiku.
 
@@ -38,13 +38,13 @@ The ultimate research goal is to determine whether automated evaluation can reli
 
 ## How the Study Works (Participant Workflow)
 
-### Step 1 — Enter email  
+### Step 1 - Enter email  
 Used only for verification and linking to Qualtrics.
 
-### Step 2 — Receive anonymized UID 
+### Step 2 - Receive anonymized UID 
 A hashed ID is automatically generated. No personal information is stored.
 
-### Step 3 — Provide 8 prompts  
+### Step 3 - Provide 8 prompts  
 Participants enter two prompts for each domain:
 - Biology  
 - Technology  
@@ -53,7 +53,7 @@ Participants enter two prompts for each domain:
 
 Each domain collects Prompt 1 and Prompt 2, for a total of 8 prompts.
 
-### Step 4 — See paired outputs (A and B)  
+### Step 4 - See paired outputs (A and B)  
 For every prompt:
 - The app generates two responses  
 - It never reveals which model produced which output  
@@ -61,7 +61,7 @@ For every prompt:
 
 The participant simply reviews the content.
 
-### Step 5 — After all 8 prompts → Redirect to Qualtrics 
+### Step 5 - After all 8 prompts → Redirect to Qualtrics 
 The app passes:
 - UID  
 - Prompt text (p1–p8)  
@@ -70,7 +70,7 @@ The app passes:
 
 Qualtrics pulls these values into the survey using a Web Service request.
 
-### Step 6 — Participant rates responses in Qualtrics
+### Step 6 - Participant rates responses in Qualtrics
 For each of the 8 items, participants rate:
 - Fluency (1–7 Likert)  
 - Factuality (1–7 Likert)  
@@ -103,7 +103,7 @@ All data is stored locally.
 
 ## Why This Matters (Academic Motivation)
 
-This project is part of a controlled HSR study in CS 690 — Evaluating Generative AI Systems.  
+This project is part of a HSR study in CS 690 - Evaluating Generative AI Systems.  
 It addresses several key research questions:
 
 - Do humans prefer outputs from one model over another?
@@ -118,12 +118,12 @@ The study’s structure allows:
 
 ## Technologies Used
 
-- Streamlit — Front-end interface  
-- OpenAI GPT-4o — Model A/B candidate  
-- Anthropic Claude 3 Haiku — Model A/B candidate  
-- Python — Evaluation logic and metric computation  
-- Qualtrics — Human ratings collection  
-- CSV Logging — For later analysis  
+- Streamlit - Front-end interface  
+- OpenAI GPT-4o - Model A/B candidate  
+- Anthropic Claude 3 Haiku - Model A/B candidate  
+- Python - Evaluation logic and metric computation  
+- Qualtrics - Human ratings collection  
+- CSV Logging - For later analysis  
 
 ## Study Outputs
 
